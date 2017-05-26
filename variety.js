@@ -29,16 +29,18 @@ Released by Maypop Inc, © 2012-2016, under the MIT License. */
       db.getMongo().setSlaveOk();
     }
   }
-
+  print(db);
   var knownDatabases = db.adminCommand('listDatabases').databases;
   if(typeof knownDatabases !== 'undefined') { // not authorized user receives error response (json) without databases key
     knownDatabases.forEach(function(d){
-      if(db.getSisterDB(d.name).getCollectionNames().length > 0) {
-        dbs.push(d.name);
-      }
-      if(db.getSisterDB(d.name).getCollectionNames().length === 0) {
-        emptyDbs.push(d.name);
-      }
+    	  if(db.getSisterDB(d.name).getCollectionNames().length > 0) {
+	      	print(db.getSisterDB(d.name).getCollectionNames().length);
+	        dbs.push(d.name);
+	      }
+	      if(db.getSisterDB(d.name).getCollectionNames().length === 0) {
+	      	print(db.getSisterDB(d.name).getCollectionNames().length);
+	        emptyDbs.push(d.name);
+	      }	    
     });
 
     if (emptyDbs.indexOf(db.getName()) !== -1) {
@@ -79,7 +81,7 @@ Released by Maypop Inc, © 2012-2016, under the MIT License. */
     read('outputFormat', 'ascii');
     read('persistResults', false);
     read('resultsDatabase', 'varietyResults');
-    read('resultsCollection', collection + 'Keys');
+    read('resultsCollection', db.getName() + "_" + collection + '_keys');
     read('resultsUser', null);
     read('resultsPass', null);
     read('logKeysContinuously', false);
@@ -138,7 +140,81 @@ Released by Maypop Inc, © 2012-2016, under the MIT License. */
 
   var $plugins = new PluginsClass(this);
   $plugins.execute('onConfig', config);
+  
+  var validateSSN = function(theValue){
+  	var pattern = /^[0-9]{3}-?[0-9]{2}-?[0-9]{4}$/;  //This allows matching of the following formats 444-55-3333 or 444553333
+  	var nonPattern1 = /^000-?[0-9]{2}-?[0-9]{4}$/;  //Any number beginning with 000 will NEVER be a valid SSN.
+  	var nonPattern2 = /^[0-9]{3}-?00-?[0-9]{4}$/;  //SSN randomization will not assign group number 00 or serial number 0000. 
+  	var nonPattern3 = /^[0-9]{3}-?[0-9]{2}-?0000$/;  //SSNs containing group number 00 or serial number 0000 will continue to be invalid.
+  	
+  	var match=false;
+		if (theValue.match(pattern)){
+  		//Pattern matches, now lets see if it validates to an actual pattern of a ssn number
+  		if(theValue.match(nonPattern1) || theValue.match(nonPattern2) || theValue.match(nonPattern3)){match=false;}
+  		else{match=true;}
+  	}
+		else{match=false;}
+  	return match;	
+}
 
+var validateCCNum = function(theNum){
+    var validCCNum = false;
+    //Remove any - or spaces from it
+    var newNum = theNum.replace(/-|\s/g,"");
+    //valid cc numbers are between 13 and 19 in length
+    //if outside those ranges, not a cc number
+    if(newNum.length>=13 && newNum.length<=19){
+        var ccPattern = /^[0-9]+$/;
+        if(newNum.match(ccPattern)){
+            //Size of value, start range, end range
+            var validStartRanges = [6, 622126, 622925, // Discover
+                                    4, 3528, 3589]; //JCB
+            
+            var validStartsWith = ["51", "52", "53", "54", "55", //MasterCard
+                                   "4", //Visa
+                                   "6011", "644", "645", "646", "647", "648", "649", "65", //Discover
+                                   "34", "37", //American Express
+                                   "300", "301", "302", "303", "304", "305", // Diners Club, Carle Blanche
+                                   "36", //Diners Club - International
+                                   "54", //Diners Club - USA & Canada
+                                   "637", "638", "639", //InstaPayment
+                                   "6304", "6706", "6771", "6709", //Laser
+                                   "5018", "5020", "5038", "5893", "6304", "6759", "6761", "6762", "6763", //Maestro
+                                   "4026", "417500", "4508", "4844", "4913", "4917"]; //Visa Electron
+            for(var i=0;i<validStartsWith.length;i++){
+                if(newNum.startsWith(validStartsWith[i])){
+                    validCCNum=true;
+                    break;
+                }
+            }
+            if(validCCNum){return validCCNum;}
+            
+            for(var i=0;i<validStartRanges.length;i++){
+                var sliceLength = validStartRanges[i];
+                var newActualNum = Number(newNum.slice(0,sliceLength));
+                if(newActualNum>= validStartRanges[i+1] && newActualNum<=validStartRanges[i+2]){
+                    validCCNum = true;
+                    break;
+                }
+                i++;i++;
+            }
+            
+            //Luhn Formula Check
+            //Drop the last digit from the number.  The last digit is what we want to check against
+            //Reverse the numbers
+            //Multiply the digits in odd positions(1,3,5,etc...) by 2 and subtract 9 to all any result higher than 9
+            //Add all the numbers together
+            //The check digit (the last number of the card) is the amount that you would need to add to get a multiple of 10 (Modulo 10)
+            
+        }
+        
+    }
+    else{
+        validCCNum = false;
+    }
+    return validCCNum;
+}
+  
   var varietyTypeOf = function(thing) {
     if (typeof thing === 'undefined') { throw 'varietyTypeOf() requires an argument'; }
 
@@ -226,6 +302,25 @@ Released by Maypop Inc, © 2012-2016, under the MIT License. */
       }
       var type = varietyTypeOf(value);
       result[key][type] = true;
+      //Analyze for SSN or CC Numbers
+      if(type=="String" || type=="Number"){
+      	var validSSN = false;
+      	var validCCNum = false;
+      	if(type=="String"){
+      		validSSN = validateSSN(value);
+      		validCCNum = validateCCNum(value);
+      	}
+      	else if(type=="Number"){
+      		validSSN = validateSSN(value.toString());
+      		validCCNum = validateCCNum(value.toString());
+      	}
+      	if(validSSN){
+      		result[key]["SSN"] = true;
+      	}
+      	if(validCCNum){
+      		result[key]["CCNUM"] = true;
+      	}
+      }
     }
     return result;
   };
@@ -330,7 +425,7 @@ Released by Maypop Inc, © 2012-2016, under the MIT License. */
     }
 
     if (config.resultsUser !== null && config.resultsPass !== null) {
-      resultsDB.auth(config.resultsUser, config.resultsPass);
+    	resultsDB.auth(config.resultsUser, config.resultsPass);
     }
 
     // replace results collection
